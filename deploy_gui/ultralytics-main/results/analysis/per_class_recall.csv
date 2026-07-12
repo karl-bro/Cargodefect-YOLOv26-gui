@@ -1,0 +1,21 @@
+Model,Class,Recall,Precision
+YOLOv26 baseline,box,0.78,0.7244345423889543
+YOLOv26 baseline,bottle,0.8558067072915132,0.8783566092846211
+YOLOv26 baseline,can,0.9263151098427886,0.85701532939795
+YOLOv26 baseline,package,0.5866666666666667,0.918140210205751
+YOLOv26 baseline,scratch,,
+YOLOv26 baseline,crack,,
+YOLOv26 baseline,dent,,
+YOLOv26 baseline,stain,,
+YOLOv26 baseline,OK,,
+YOLOv26 baseline,NG,,
+CargoDefect-YOLOv26,box,0.76,0.8589853158218688
+CargoDefect-YOLOv26,bottle,0.8592592592592593,0.9206554809711406
+CargoDefect-YOLOv26,can,0.8545454545454545,0.8609344206724838
+CargoDefect-YOLOv26,package,0.6054078474832308,0.9190362210863613
+CargoDefect-YOLOv26,scratch,0.0,0.0
+CargoDefect-YOLOv26,crack,0.0,0.0
+CargoDefect-YOLOv26,dent,0.0,0.0
+CargoDefect-YOLOv26,stain,0.0,0.0
+CargoDefect-YOLOv26,OK,1.0,0.505256648113791
+CargoDefect-YOLOv26,NG,0.0,0.0

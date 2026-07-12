@@ -1,0 +1,16 @@
+# PackDet packaging detection (standard YOLO dataset, polygon labels supported at train time)
+# Source: https://github.com/... PackDet — local copy at ../../../../PackDet/data
+
+path: ../../../../PackDet/data
+train: images/Train
+val: images/Validation
+test: images/Validation
+
+nc: 6
+names:
+  0: plastic_bottle
+  1: glass_bottle
+  2: can
+  3: jar
+  4: carton_beverage
+  5: tube

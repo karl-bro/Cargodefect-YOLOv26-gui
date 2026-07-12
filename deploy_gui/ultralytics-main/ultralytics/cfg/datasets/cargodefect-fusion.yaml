@@ -1,0 +1,39 @@
+# CargoDefect fusion v2: split detection / defect classification / quality
+# Detection: 4 cargo classes only. Defect & anomaly are NOT detection targets.
+
+dataset_type: CargoDefectDataset
+path: ../../../../PackDet/data
+train: images/Train
+val: images/Validation
+test: images/Validation
+
+packaging_path: ../../../../PackDet/data
+mvtec_path: ../../../../MVTec LOCO AD
+
+data_sources:
+  packaging: 0.7
+  mvtec_loco: 0.3
+
+quality_dir: quality
+mvtec_anomaly_name: anomaly
+mvtec_pseudo_bbox: false
+# Include MVTec test anomalies in training (required for OK/NG supervision; train/good alone is all OK)
+mvtec_train_include_anomalies: true
+quality_pos_weight: 2.5
+defect_copy_paste_prob: 0.3
+cargodefect_copy_paste: 0.35
+
+nc_cargo: 4
+nc_defect: 2
+nc_quality: 2
+nc: 4
+
+names:
+  0: box
+  1: bottle
+  2: can
+  3: package
+
+defect_names:
+  0: none
+  1: defect

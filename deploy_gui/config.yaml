@@ -1,0 +1,73 @@
+# CargoDefect-YOLOv26-Detect GUI Configuration
+# =============================================
+
+model:
+  weights: weights/best_cargodefect_yolov26_detect.pt
+  imgsz: 640
+  device: cpu
+  iou: 0.45
+  raw_conf: 0.001
+  max_det: 100
+
+threshold:
+  package_conf: 0.03
+  defect_show_conf: 0.12
+  defect_ng_conf: 0.25
+
+classes:
+  package_id: 0
+  defect_id: 1
+
+filter:
+  enable_roi: true
+  roi: [80, 40, 880, 520]
+  require_defect_inside_package_or_roi: true
+  defect_inside_ratio: 0.5
+  min_defect_area_ratio: 0.0008
+  max_defect_area_ratio: 0.15
+  max_aspect_ratio: 8.0
+
+package_detect:
+  use_roi_crop: true
+  roi: [180, 70, 850, 500]
+
+display:
+  show_raw_boxes: false
+  show_filtered_boxes_only: true
+  show_raw_package_boxes: false
+
+performance:
+  camera_display_fps: 25
+  infer_fps: 5
+  frame_skip: 8
+  drop_old_frames: true
+  debug_print: false
+  save_debug_frame: false
+
+package_fallback:
+  enable: true
+  method: background_diff
+  roi: [180, 70, 850, 500]
+  min_diff_ratio: 0.04
+  diff_threshold: 20
+
+decision:
+  quality_rule: defect_detected_to_NG
+  stable_frames: 5
+  send_cooldown_ms: 1500
+  fixed_station_mode: false
+  debug: false
+
+camera:
+  source: 0
+  width: 960
+  height: 540
+
+serial:
+  enable: false
+  port: COM3
+  baudrate: 115200
+
+save:
+  result_dir: results
+  auto_capture_num: 20

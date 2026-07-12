@@ -1,0 +1,25 @@
+# CargoDefect GUI Configuration
+# Model weights
+weights_path: "/home/swot2486/0701/ultralytics-main/runs/detect/runs/cargodefect/package_defect_baseline/weights/best.pt"
+
+# Camera
+camera_id: 0
+
+# Detection thresholds (per-class)
+package_conf: 0.35
+defect_conf: 0.15
+iou_threshold: 0.5
+
+# Serial port (STM32)
+serial_port: "/dev/ttyUSB0"
+baudrate: 115200
+
+# Save directory
+save_dir: "gui_results"
+
+# Class names
+class_names:
+  - "package"
+  - "defect"
+
+# OK/NG rule: defect detected → NG, else → OK

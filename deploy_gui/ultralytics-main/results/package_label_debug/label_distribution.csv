@@ -1,0 +1,3 @@
+class_id,class_name,train,val,total
+0,package,6303,670,6973
+1,defect,21160,805,21965

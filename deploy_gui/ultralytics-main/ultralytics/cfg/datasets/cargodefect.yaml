@@ -1,0 +1,51 @@
+# CargoDefect multi-source dataset
+# Supports:
+# - Packaging detection (bbox)
+# - MVTec LOCO AD defect weak detection
+# - OK/NG quality labels
+
+dataset_type: CargoDefectDataset
+
+# Required by generic detector checks (kept for compatibility)
+path: datasets/packaging
+train: images/train
+val: images/val
+test: images/val
+
+# Multi-source roots (update to your local paths)
+# PackDet example: packaging_path: ../PackDet/data
+packaging_path: datasets/packaging
+mvtec_path: datasets/mvtec_loco
+
+# Source sampling ratio for train
+data_sources:
+  packaging: 0.7
+  mvtec_loco: 0.3
+
+# Quality label sidecar for packaging only:
+# datasets/packaging/quality/{train,val,test}/{stem}.txt
+quality_dir: quality
+
+# MVTec conversion behavior
+mvtec_anomaly_name: anomaly
+mvtec_pseudo_bbox: true
+
+# Defect copy-paste to packaging
+defect_copy_paste_prob: 0.3
+cargodefect_copy_paste: 0.35
+
+# Unified classes: cargo + defect
+nc_cargo: 4
+nc_defect: 6
+nc: 10
+names:
+  0: box
+  1: bottle
+  2: can
+  3: package
+  4: scratch
+  5: crack
+  6: dent
+  7: stain
+  8: broken
+  9: anomaly

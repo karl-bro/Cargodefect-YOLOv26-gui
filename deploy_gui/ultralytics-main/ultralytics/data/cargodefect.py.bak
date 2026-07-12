@@ -1,0 +1,383 @@
+# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+"""CargoDefect multi-task dataset: cargo/defect detection + OK/NG quality labels."""
+
+from __future__ import annotations
+
+import os
+from copy import deepcopy
+from itertools import repeat
+from multiprocessing.pool import ThreadPool
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import torch
+
+from ultralytics.utils import DEFAULT_CFG, LOCAL_RANK, LOGGER, NUM_THREADS, TQDM, IterableSimpleNamespace
+
+from .augment import Compose, Format, LetterBox, v8_transforms
+from .dataset import DATASET_CACHE_VERSION, YOLODataset
+from .utils import (
+    get_hash,
+    img2label_paths,
+    load_dataset_cache_file,
+    save_dataset_cache_file,
+    verify_image_label,
+)
+
+
+def im_file_to_quality_path(im_file: str, quality_dir: str = "quality") -> Path:
+    """Map image path to quality label txt: images/train/a.jpg -> quality/train/a.txt."""
+    p = Path(im_file)
+    parts = list(p.parts)
+    if "images" in parts:
+        idx = parts.index("images")
+        parts[idx] = quality_dir
+        return Path(*parts).with_suffix(".txt")
+    return p.with_suffix(".txt")
+
+
+def load_quality_label(path: Path, default: int = 0) -> int:
+    """Load OK/NG label from txt file. 0=OK, 1=NG."""
+    if not path.exists():
+        return default
+    try:
+        val = int(path.read_text(encoding="utf-8").strip().split()[0])
+        return 0 if val <= 0 else 1
+    except (ValueError, IndexError):
+        LOGGER.warning(f"Invalid quality label in {path}, defaulting to OK (0)")
+        return default
+
+
+def read_yolo_label_file(label_file: str | Path) -> np.ndarray:
+    """Read a YOLO label file into (N, 5) array [cls, x, y, w, h]."""
+    p = Path(label_file)
+    if not p.exists():
+        return np.zeros((0, 5), dtype=np.float32)
+    with open(p, encoding="utf-8") as f:
+        rows = [x.split() for x in f.read().strip().splitlines() if len(x) and not x.startswith("#")]
+    if not rows:
+        return np.zeros((0, 5), dtype=np.float32)
+    return np.array([[float(x) for x in row[:5]] for row in rows], dtype=np.float32)
+
+
+def merge_cargo_defect_arrays(cargo_lb: np.ndarray, defect_lb: np.ndarray, nc_cargo: int) -> np.ndarray:
+    """Merge cargo and defect labels; offset defect class ids by nc_cargo."""
+    parts = []
+    if len(cargo_lb):
+        parts.append(cargo_lb)
+    if len(defect_lb):
+        d = defect_lb.copy()
+        d[:, 0] += nc_cargo
+        parts.append(d)
+    if not parts:
+        return np.zeros((0, 5), dtype=np.float32)
+    return np.concatenate(parts, axis=0)
+
+
+class CargoDefectFormat(Format):
+    """Format transform that preserves image-level quality_label in the batch."""
+
+    def apply_instances(self, labels: dict[str, Any], params: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Format detection targets and attach quality_label tensor."""
+        labels = super().apply_instances(labels, params)
+        ql = labels.pop("quality_label", 0)
+        labels["quality_label"] = torch.tensor(int(ql), dtype=torch.long)
+        return labels
+
+
+def cargodefect_transforms(dataset, imgsz: int, hyp: IterableSimpleNamespace, stretch: bool = False) -> Compose:
+    """YOLOv8/26 transforms with defect-oriented blur, brightness, and copy-paste defaults."""
+    if getattr(hyp, "cargodefect_copy_paste", None) is not None:
+        hyp.copy_paste = hyp.cargodefect_copy_paste
+    elif getattr(hyp, "copy_paste", 0.0) <= 0.0:
+        hyp.copy_paste = 0.3
+
+    if getattr(hyp, "augmentations", None) is None:
+        try:
+            import albumentations as A
+
+            hyp.augmentations = [
+                A.OneOf(
+                    [
+                        A.Blur(blur_limit=3, p=1.0),
+                        A.GaussianBlur(blur_limit=3, p=1.0),
+                        A.MotionBlur(blur_limit=3, p=1.0),
+                    ],
+                    p=0.2,
+                ),
+                A.RandomBrightnessContrast(brightness_limit=0.25, contrast_limit=0.15, p=0.35),
+                A.GaussNoise(var_limit=(5.0, 25.0), p=0.1),
+            ]
+        except ImportError:
+            LOGGER.warning("albumentations not installed; using default HSV augmentations only for CargoDefect.")
+
+    return v8_transforms(dataset, imgsz=imgsz, hyp=hyp, stretch=stretch)
+
+
+class CargoDefectDataset(YOLODataset):
+    """Multi-task dataset for cargo detection, defect detection, and OK/NG quality labels.
+
+    Directory layout::
+
+        dataset/
+          images/{train,val,test}/
+          labels/{train,val,test}/          # unified detection labels (cargo + defect classes)
+          # OR
+          labels/cargo/{train,val,test}/    # cargo boxes only
+          labels/defect/{train,val,test}/   # defect boxes only (class ids 0..nc_defect-1)
+          quality/{train,val,test}/{stem}.txt   # single line: 0=OK, 1=NG
+
+    Each ``__getitem__`` returns a dict that becomes, after transforms:
+    ``img``, ``cls``, ``bboxes``, ``batch_idx``, and ``quality_label``.
+    """
+
+    def __init__(self, *args, data: dict | None = None, task: str = "detect", **kwargs):
+        """Initialize CargoDefectDataset."""
+        self.data = data or {}
+        self.nc_defect = int(self.data.get("nc_defect", 6))
+        self.nc_cargo = int(self.data.get("nc_cargo", max(int(self.data.get("nc", 16)) - self.nc_defect, 1)))
+        self.quality_dir = self.data.get("quality_dir", "quality")
+        self.use_dual_labels = "labels_cargo" in self.data and "labels_defect" in self.data
+        self.labels_cargo_dir = self.data.get("labels_cargo", "labels/cargo")
+        self.labels_defect_dir = self.data.get("labels_defect", "labels/defect")
+        super().__init__(*args, data=data, task=task, **kwargs)
+
+    def _attach_quality_labels(self, labels: list[dict]) -> list[dict]:
+        """Add quality_label field from sidecar txt files."""
+        for lb in labels:
+            q_path = im_file_to_quality_path(lb["im_file"], self.quality_dir)
+            lb["quality_label"] = load_quality_label(q_path, default=0)
+        return labels
+
+    def cache_labels(self, path: Path = Path("./labels.cache")) -> dict:
+        """Cache merged cargo/defect labels and quality metadata."""
+        x = {"labels": []}
+        nm, nf, ne, nc, msgs = 0, 0, 0, 0, []
+        num_cls = len(self.data["names"])
+        nkpt, ndim = self.data.get("kpt_shape", (0, 0))
+
+        if self.use_dual_labels:
+            cargo_files = img2label_paths(
+                self.im_files, label_dir=self.labels_cargo_dir.replace("/", os.sep).strip(os.sep)
+            )
+            defect_files = img2label_paths(
+                self.im_files, label_dir=self.labels_defect_dir.replace("/", os.sep).strip(os.sep)
+            )
+            self.label_files = cargo_files
+            desc = f"{self.prefix}Scanning CargoDefect dual labels {path.parent / path.stem}..."
+            total = len(self.im_files)
+
+            def _worker(args):
+                im_file, c_file, d_file = args
+                msg, shape = "", (0, 0)
+                try:
+                    from ultralytics.data.utils import check_image
+
+                    msg, shape = check_image(im_file)
+                    merged = merge_cargo_defect_arrays(
+                        read_yolo_label_file(c_file), read_yolo_label_file(d_file), self.nc_cargo
+                    )
+                    if len(merged):
+                        assert merged[:, 1:].max() <= 1.01
+                        assert merged[:, 0].max() < num_cls
+                    q_path = im_file_to_quality_path(im_file, self.quality_dir)
+                    label = {
+                        "im_file": im_file,
+                        "shape": shape,
+                        "cls": merged[:, 0:1] if len(merged) else np.zeros((0, 1)),
+                        "bboxes": merged[:, 1:5] if len(merged) else np.zeros((0, 4)),
+                        "segments": [],
+                        "keypoints": None,
+                        "normalized": True,
+                        "bbox_format": "xywh",
+                        "quality_label": load_quality_label(q_path),
+                    }
+                    return label, 1, 0, 0, 0, msg
+                except Exception as e:
+                    return None, 0, 0, 0, 1, f"{self.prefix}{im_file}: {e}"
+
+            with ThreadPool(NUM_THREADS) as pool:
+                results = pool.imap(_worker, zip(self.im_files, cargo_files, defect_files))
+                pbar = TQDM(results, desc=desc, total=total)
+                for label, nf_f, nc_f, ne_f, nc_c, msg in pbar:
+                    nf += nf_f
+                    nc += nc_c
+                    ne += ne_f
+                    if label:
+                        x["labels"].append(label)
+                    if msg:
+                        msgs.append(msg)
+                pbar.close()
+        else:
+            self.label_files = img2label_paths(self.im_files)
+            desc = f"{self.prefix}Scanning {path.parent / path.stem}..."
+            total = len(self.im_files)
+            with ThreadPool(NUM_THREADS) as pool:
+                results = pool.imap(
+                    verify_image_label,
+                    zip(
+                        self.im_files,
+                        self.label_files,
+                        repeat(self.prefix),
+                        repeat(self.use_keypoints),
+                        repeat(num_cls),
+                        repeat(nkpt),
+                        repeat(ndim),
+                        repeat(self.single_cls),
+                    ),
+                )
+                pbar = TQDM(results, desc=desc, total=total)
+                for im_file, lb, shape, segments, keypoint, nm_f, nf_f, ne_f, nc_f, msg in pbar:
+                    nm += nm_f
+                    nf += nf_f
+                    ne += ne_f
+                    nc += nc_f
+                    if im_file:
+                        q_path = im_file_to_quality_path(im_file, self.quality_dir)
+                        x["labels"].append(
+                            {
+                                "im_file": im_file,
+                                "shape": shape,
+                                "cls": lb[:, 0:1],
+                                "bboxes": lb[:, 1:5],
+                                "segments": segments,
+                                "keypoints": keypoint,
+                                "normalized": True,
+                                "bbox_format": "xywh",
+                                "quality_label": load_quality_label(q_path),
+                            }
+                        )
+                    if msg:
+                        msgs.append(msg)
+                    pbar.desc = f"{desc} {nf} images, {nm + ne} backgrounds, {nc} corrupt"
+                pbar.close()
+
+        if msgs:
+            LOGGER.info("\n".join(msgs))
+        if nf == 0:
+            LOGGER.warning(f"{self.prefix}No labels found in {path}.")
+        x["hash"] = get_hash(self.label_files + self.im_files)
+        x["results"] = nf, nm, ne, nc, len(self.im_files)
+        x["msgs"] = msgs
+        if x["labels"]:
+            save_dataset_cache_file(self.prefix, path, x, DATASET_CACHE_VERSION)
+        return x
+
+    def get_labels(self) -> list[dict]:
+        """Return label list with detection targets and quality_label."""
+        if not self.use_dual_labels:
+            self.label_files = img2label_paths(self.im_files)
+        else:
+            self.label_files = img2label_paths(
+                self.im_files, label_dir=self.labels_cargo_dir.replace("/", os.sep).strip(os.sep)
+            )
+
+        cache_path = Path(self.label_files[0]).parent.with_suffix(".cache")
+        try:
+            cache, exists = load_dataset_cache_file(cache_path), True
+            assert cache["version"] == DATASET_CACHE_VERSION
+            assert cache["hash"] == get_hash(self.label_files + self.im_files)
+        except (FileNotFoundError, AssertionError, AttributeError, ModuleNotFoundError):
+            cache, exists = self.cache_labels(cache_path), False
+
+        nf, nm, ne, nc, n = cache.pop("results")
+        if exists and LOCAL_RANK in {-1, 0}:
+            TQDM(None, desc=f"{self.prefix}Scanning {cache_path}... {nf} images", total=n, initial=n)
+            if cache.get("msgs"):
+                LOGGER.info("\n".join(cache["msgs"]))
+
+        labels = cache["labels"]
+        if not labels:
+            raise RuntimeError(f"No valid CargoDefect images found in {cache_path}.")
+        cache.pop("hash", None)
+        cache.pop("version", None)
+        cache.pop("msgs", None)
+        self.im_files = [lb["im_file"] for lb in labels]
+        return self._attach_quality_labels(labels)
+
+    def get_image_and_label(self, index: int) -> dict[str, Any]:
+        """Return image, detection targets, and quality label for one sample."""
+        label = deepcopy(self.labels[index])
+        label.pop("shape", None)
+        label["quality_label"] = int(label.get("quality_label", 0))
+        label["img"], label["ori_shape"], label["resized_shape"] = self.load_image(index)
+        label["ratio_pad"] = (
+            label["resized_shape"][0] / label["ori_shape"][0],
+            label["resized_shape"][1] / label["ori_shape"][1],
+        )
+        if self.rect:
+            label["rect_shape"] = self.batch_shapes[self.batch[index]]
+        return self.update_labels_info(label)
+
+    def build_transforms(self, hyp: dict | None = None) -> Compose:
+        """Build transforms with defect-oriented augmentation and quality-aware formatting."""
+        hyp = hyp or DEFAULT_CFG
+        if self.augment:
+            if not isinstance(hyp, IterableSimpleNamespace):
+                hyp = IterableSimpleNamespace(**dict(vars(hyp) if hasattr(hyp, "__dict__") else hyp))
+            hyp.mosaic = hyp.mosaic if self.augment and not self.rect else 0.0
+            hyp.mixup = hyp.mixup if self.augment and not self.rect else 0.0
+            hyp.cutmix = hyp.cutmix if self.augment and not self.rect else 0.0
+            transforms = cargodefect_transforms(self, self.imgsz, hyp)
+        else:
+            transforms = Compose([LetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
+        transforms.append(
+            CargoDefectFormat(
+                bbox_format="xywh",
+                normalize=True,
+                return_mask=self.use_segments,
+                return_keypoint=self.use_keypoints,
+                return_obb=self.use_obb,
+                batch_idx=True,
+                mask_ratio=getattr(hyp, "mask_ratio", 4),
+                mask_overlap=getattr(hyp, "overlap_mask", True),
+                bgr=getattr(hyp, "bgr", 0.0) if self.augment else 0.0,
+            )
+        )
+        return transforms
+
+    @staticmethod
+    def collate_fn(batch: list[dict]) -> dict:
+        """Collate batch with stacked quality_label tensor [B]."""
+        new_batch = YOLODataset.collate_fn(batch)
+        if batch and "quality_label" in batch[0]:
+            ql = [b["quality_label"] for b in batch]
+            if isinstance(ql[0], torch.Tensor):
+                new_batch["quality_label"] = torch.stack([q.reshape(()) for q in ql], 0).long()
+            else:
+                new_batch["quality_label"] = torch.tensor(ql, dtype=torch.long)
+        return new_batch
+
+
+def build_defect_batch(batch: dict[str, torch.Tensor], nc_cargo: int) -> dict[str, torch.Tensor]:
+    """Filter detection batch to defect-only targets for Small Defect Head loss."""
+    cls = batch["cls"].view(-1)
+    mask = cls >= nc_cargo
+    device = batch["batch_idx"].device
+    if mask.sum() == 0:
+        return {
+            "img": batch["img"],
+            "batch_idx": torch.zeros(0, device=device, dtype=batch["batch_idx"].dtype),
+            "cls": torch.zeros(0, 1, device=batch["cls"].device, dtype=batch["cls"].dtype),
+            "bboxes": torch.zeros(0, 4, device=batch["bboxes"].device, dtype=batch["bboxes"].dtype),
+        }
+    return {
+        "img": batch["img"],
+        "batch_idx": batch["batch_idx"].view(-1)[mask],
+        "cls": (cls[mask] - nc_cargo).view(-1, 1).to(batch["cls"].dtype),
+        "bboxes": batch["bboxes"][mask],
+    }
+
+
+def quality_targets_from_batch(batch: dict[str, torch.Tensor], nc_quality: int = 3) -> torch.Tensor:
+    """Map binary quality_label (0=OK, 1=NG) to model quality class indices."""
+    if "quality_label" not in batch:
+        from ultralytics.nn.modules.quality_head import QualityHead
+
+        return QualityHead.derive_quality_labels(batch)
+
+    ql = batch["quality_label"].long().view(-1)
+    if nc_quality <= 2:
+        return ql.clamp(0, nc_quality - 1)
+    return torch.where(ql <= 0, torch.zeros_like(ql), torch.full_like(ql, min(2, nc_quality - 1)))

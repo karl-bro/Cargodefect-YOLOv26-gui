@@ -1,0 +1,7 @@
+names:
+- package
+- defect
+nc: 2
+path: /home/swot2486/0701/ultralytics-main/datasets/cargodefect_package
+train: images/train
+val: images/val

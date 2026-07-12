@@ -1,0 +1,3 @@
+model,mAP50,mAP50_95,precision,recall,q_accuracy,q_ok_acc,q_ng_recall,q_f1
+baseline_package,0.4951,0.4635,0.4911,0.494,?,?,?,?
+cargodefect_package,0.495,0.4601,0.4895,0.4903,?,?,?,?

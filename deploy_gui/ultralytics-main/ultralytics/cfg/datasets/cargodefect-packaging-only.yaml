@@ -1,0 +1,32 @@
+# CargoDefect packaging-only (PackDet, no MVTec)
+
+dataset_type: CargoDefectDataset
+path: ../../../../PackDet/data
+train: images/Train
+val: images/Validation
+test: images/Validation
+
+packaging_path: ../../../../PackDet/data
+
+data_sources:
+  packaging: 1.0
+  mvtec_loco: 0.0
+
+quality_dir: quality
+nc_cargo: 6
+nc_defect: 6
+nc: 12
+
+names:
+  0: plastic_bottle
+  1: glass_bottle
+  2: can
+  3: jar
+  4: carton_beverage
+  5: tube
+  6: scratch
+  7: crack
+  8: dent
+  9: stain
+  10: broken
+  11: anomaly

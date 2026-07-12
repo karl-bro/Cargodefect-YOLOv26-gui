@@ -1,0 +1,22 @@
+{
+  "quality": {
+    "accuracy": 0.7012987012987013,
+    "ng_recall": 0.905,
+    "ok_accuracy": 0.5018359853121175,
+    "false_ok_rate": 0.095,
+    "false_ng_rate": 0.4981640146878825,
+    "fn_ng": 76,
+    "fp_ok": 407,
+    "n_ok": 817,
+    "n_ng": 800
+  },
+  "defect_accuracy": 0.54421768707483,
+  "defect_recall": {
+    "none": 0.7784577723378213,
+    "scratch": 0.0,
+    "crack": 0.0,
+    "dent": 0.0,
+    "stain": 0.305,
+    "anomaly": 0.0
+  }
+}

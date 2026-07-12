@@ -1,0 +1,11 @@
+{
+  "accuracy": 0.5584415584415584,
+  "ok_accuracy": 0.12607099143206854,
+  "ng_recall": 1.0,
+  "false_ok_rate": 0.0,
+  "false_ng_rate": 0.8739290085679314,
+  "fn_ng_as_ok": 0,
+  "fp_ok_as_ng": 714,
+  "n_ok": 817,
+  "n_ng": 800
+}

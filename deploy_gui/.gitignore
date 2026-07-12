@@ -1,0 +1,24 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Results (generated at runtime)
+results/images/
+results/annotated/
+results/results.csv
+results/score_report.md
+results/background_empty.jpg
+results/debug_no_package/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

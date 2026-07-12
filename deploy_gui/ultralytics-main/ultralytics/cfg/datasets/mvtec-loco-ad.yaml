@@ -1,0 +1,42 @@
+# MVTec LOCO AD reference layout (multi-category anomaly detection)
+# Used by CargoDefectDataset via mvtec_path; optional offline convert via convert_mvtec_loco.py
+#
+# Per category: {category}/{category}/
+#   train/good/
+#   validation/good/
+#   test/good/
+#   test/logical_anomalies/
+#   test/structural_anomalies/
+#   ground_truth/{logical,structural}_anomalies/{id}/{id}.png
+
+path: ../../../../MVTec LOCO AD
+dataset_type: CargoDefectDataset
+train: .
+val: .
+
+packaging_path: ../../../../PackDet/data
+mvtec_path: ../../../../MVTec LOCO AD
+
+data_sources:
+  packaging: 0.0
+  mvtec_loco: 1.0
+
+nc_cargo: 6
+nc_defect: 6
+nc: 12
+mvtec_anomaly_name: anomaly
+mvtec_pseudo_bbox: true
+
+names:
+  0: plastic_bottle
+  1: glass_bottle
+  2: can
+  3: jar
+  4: carton_beverage
+  5: tube
+  6: scratch
+  7: crack
+  8: dent
+  9: stain
+  10: broken
+  11: anomaly

@@ -1,0 +1,64 @@
+# CargoDefect-YOLOv26-Detect: PGME backbone + standard YOLO Detect Head
+# Keeps PGME domain fusion, removes CargoInspectionHead
+# nc=2 (package, defect), standard YOLO detection labels
+# 4-scale output: P2(128ch), P3(256ch), P4(512ch), P5(1024ch)
+
+nc: 2
+end2end: True
+reg_max: 1
+
+# PGME switches (kept from original model)
+use_edge_branch: True
+use_frequency_branch: True
+
+scales:
+  n: [0.50, 0.25, 1024]
+  s: [0.50, 0.50, 1024]
+  m: [0.50, 1.00, 512]
+  l: [1.00, 1.00, 512]
+  x: [1.00, 1.50, 512]
+
+# Backbone: identical to cargodefect-yolov26-package
+# PGME at layer 2 fuses edge + frequency + RGB into shallow features
+backbone:
+  - [-1, 1, nn.Identity, []]                           # 0:  input pass-through
+  - [-1, 1, Conv, [64, 3, 2]]                          # 1:  640x640 -> 320x320, 64ch
+  - [[0, 1], 1, PGME, [64]]                             # 2:  PGME(image, feat[1]): Sobel edge + Haar-DWT + RGB fusion, 64ch
+  - [-1, 1, Conv, [128, 3, 2]]                         # 3:  320x320 -> 160x160, 128ch (stride 4)
+  - [-1, 2, C3k2, [256, False, 0.25]]                  # 4:  P2 stage, 256ch
+  - [-1, 1, Conv, [256, 3, 2]]                         # 5:  160x160 -> 80x80, 256ch (stride 8)
+  - [-1, 2, C3k2, [512, False, 0.25]]                  # 6:  P3 stage, 512ch
+  - [-1, 1, Conv, [512, 3, 2]]                         # 7:  80x80 -> 40x40, 512ch (stride 16)
+  - [-1, 2, C3k2, [512, True]]                         # 8:  P4 stage, 512ch
+  - [-1, 1, Conv, [1024, 3, 2]]                        # 9:  40x40 -> 20x20, 1024ch (stride 32)
+  - [-1, 2, C3k2, [1024, True]]                        # 10: P5 stage, 1024ch
+  - [-1, 1, SPPF, [1024, 5, 3, True]]                  # 11: SPPF
+  - [-1, 2, C2PSA, [1024]]                             # 12: C2PSA attention
+
+# Neck: FPN+PAN, 4-scale (P2/P3/P4/P5)
+# Produces detection feature maps at:
+#   P2: layer 21, 128ch, 160x160
+#   P3: layer 24, 256ch, 80x80
+#   P4: layer 27, 512ch, 40x40
+#   P5: layer 30, 1024ch, 20x20
+head:
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]         # 13: upsample P5
+  - [[-1, 8], 1, Concat, [1]]                           # 14: cat(13, P4=8)
+  - [-1, 2, C3k2, [512, True]]                         # 15: FPN P4, 512ch
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]         # 16: upsample
+  - [[-1, 6], 1, Concat, [1]]                           # 17: cat(16, P3=6)
+  - [-1, 2, C3k2, [256, True]]                         # 18: FPN P3, 256ch
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]         # 19: upsample
+  - [[-1, 4], 1, Concat, [1]]                           # 20: cat(19, P2=4)
+  - [-1, 2, C3k2, [128, True]]                         # 21: P2 output, 128ch at 160x160
+  - [-1, 1, Conv, [128, 3, 2]]                         # 22: downsample P2 -> 80x80
+  - [[-1, 18], 1, Concat, [1]]                          # 23: cat(22, FPN_P3=18)
+  - [-1, 2, C3k2, [256, True]]                         # 24: P3 output, 256ch at 80x80
+  - [-1, 1, Conv, [256, 3, 2]]                         # 25: downsample P3 -> 40x40
+  - [[-1, 15], 1, Concat, [1]]                          # 26: cat(25, FPN_P4=15)
+  - [-1, 2, C3k2, [512, True]]                         # 27: P4 output, 512ch at 40x40
+  - [-1, 1, Conv, [512, 3, 2]]                         # 28: downsample P4 -> 20x20
+  - [[-1, 12], 1, Concat, [1]]                          # 29: cat(28, backbone=12)
+  - [-1, 1, C3k2, [1024, True, 0.5, True]]             # 30: P5 output, 1024ch at 20x20
+  # Standard YOLO Detect Head (replaces CargoInspectionHead)
+  - [[21, 24, 27, 30], 1, Detect, [nc]]                 # 31: Detect(P2, P3, P4, P5), nc=2

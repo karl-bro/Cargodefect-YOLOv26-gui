@@ -1,0 +1,49 @@
+# Ablation D: C + Edge Enhancement (PGME edge branch)
+experiment: D
+name: ablation_cargodefect_edge_enhance
+description: Quality head + PGME Sobel edge branch
+
+model: ultralytics/cfg/models/26/ablation/cargodefect_edge_enhance.yaml
+data: ultralytics/cfg/datasets/cargodefect-fusion.yaml
+
+train:
+  epochs: 100
+  imgsz: 640
+  batch: 8
+  device: 0
+  workers: 4
+  project: runs/cargodefect
+  run_name: ablation/cargodefect_edge_enhance
+  exist_ok: true
+  amp: true
+  cos_lr: true
+  grad_clip: 1.0
+  optimizer: auto
+  lr0: 0.01
+  lrf: 0.01
+  momentum: 0.937
+  weight_decay: 0.0005
+  warmup_epochs: 3.0
+  warmup_momentum: 0.8
+  warmup_bias_lr: 0.1
+  close_mosaic: 10
+  patience: 100
+  seed: 0
+  deterministic: true
+  hsv_h: 0.015
+  hsv_s: 0.7
+  hsv_v: 0.4
+  degrees: 0.0
+  translate: 0.1
+  scale: 0.5
+  shear: 0.0
+  perspective: 0.0
+  flipud: 0.0
+  fliplr: 0.5
+  bgr: 0.0
+  mosaic: 1.0
+  mixup: 0.0
+  cutmix: 0.0
+  copy_paste: 0.0
+  auto_augment: randaugment
+  erasing: 0.4
